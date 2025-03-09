@@ -21,6 +21,10 @@
 # If you want to implement other socket info/action requests, you can find a list at:
 # https://github.com/nextcloud/desktop/blob/master/src/gui/socketapi/socketapi.h
 
+def DEBUG(msg):
+    #print("DEBUG:", msg)
+    pass
+
 import sys
 python3 = sys.version_info[0] >= 3
 
@@ -45,21 +49,22 @@ appname = 'Nextcloud'
 #print("--> This version of "+appname+"-client-nautilus was changed by @fabianostermann")
 #print("Using python version {}".format(sys.version_info))
 
-# determine nextcloud path
-nextcloud_path = "~/Nextcloud"
+# determine nextcloud path, default is "~/Nextcloud"
+nextcloud_pathes = []
 try:
     config = configparser.ConfigParser()
     config.read(os.path.expanduser("~/.config/Nextcloud/nextcloud.cfg"))
     for key, value in config["Accounts"].items():
         if "localpath" in key:
-            nextcloud_path = value
-            break
+            path = os.path.expanduser(value)
+            path = os.path.realpath(path)
+            nextcloud_pathes.append(path)
 except:
-    print("Could not read config, falling back to default path ("+nextcloud_path+")..")
+    nextcloud_pathes = ["~/Nextcloud"]
+    print("Could not read config, falling back to default path",nextcloud_pathes,"..")
 
-nextcloud_path = os.path.expanduser(nextcloud_path)
-nextcloud_path = os.path.realpath(nextcloud_path)
-
+DEBUG("Found nextcloud folders:")
+DEBUG(nextcloud_pathes)
 
 def get_local_path(url):
     if url[0:7] == 'file://':
@@ -224,28 +229,46 @@ def translate_command(cmd):
                'NEW+SWM'   : 'Syncing..',
                'IGNORE+SWM': 'WARNING..',
                'ERROR+SWM' : 'ERROR..',
-               'NOP'       : 'No operation (the nextcloud path could be wrong. Is '+nextcloud_path+' correct?)'
+               'NOP'       : 'No operation (the nextcloud path could be wrong. Is '+";".join(nextcloud_pathes)+' correct?)'
                }
     return answers[cmd]
 
 def handle_commands(action, args):
     #answer = args[0]  # For debug only
     #print("Action " + action + " -> got " + answer)  # For debug only
-    
+    global RECV_ANSWER
     if action == 'STATUS':
         state = args[0]
+        
         print(translate_command(state))
-        #print("Exiting on purpose.")
-        exit()
+        RECV_ANSWER = True
+        
+        if len(nextcloud_pathes) == 1:      
+            DEBUG("Exiting on purpose.")
+            exit()
 
 socketConnect = SocketConnect()
-socketConnect.addListener(handle_commands)
+socketConnect.addListener(handle_commands)   
 
-#print("handle notify..")
-socketConnect.sendCommand("RETRIEVE_FOLDER_STATUS:"+nextcloud_path+"\n")
-time.sleep(0.1)
-socketConnect._handle_notify(None, None)
+RECV_ANSWER = False
+for nextcloud_path in nextcloud_pathes:
+    if len(nextcloud_pathes) > 1:
+        print(nextcloud_path, end=": ")
 
-time.sleep(3)
-print("No answer from socket.")
+    RECV_ANSWER = False
+
+    DEBUG("handle notify..")
+    socketConnect.sendCommand("RETRIEVE_FOLDER_STATUS:"+nextcloud_path+"\n")
+    time.sleep(0.1)
+    socketConnect._handle_notify(None, None)
+
+    # wait 3 seconds for an answer
+    wait_count = 3
+    while wait_count>0 and not RECV_ANSWER:
+        DEBUG(".")
+        time.sleep(0.2)
+        wait_count -= 0.2
+        
+    if not RECV_ANSWER:  
+        print("No answer from socket.")
 
