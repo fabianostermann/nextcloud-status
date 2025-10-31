@@ -21,12 +21,21 @@
 # If you want to implement other socket info/action requests, you can find a list at:
 # https://github.com/nextcloud/desktop/blob/master/src/gui/socketapi/socketapi.h
 
-def DEBUG(msg):
-    #print("DEBUG:", msg)
-    pass
-
 import sys
 python3 = sys.version_info[0] >= 3
+
+# Print help
+if "-h" in sys.argv or "--help" in sys.argv:
+    print("USAGE:", sys.argv[0], "[-h|--help] [--debug] [files..]")
+    sys.exit()
+
+def DEBUG(msg): pass
+DEBUG_MODE = "--debug" in sys.argv
+if DEBUG_MODE:
+    sys.argv.remove("--debug")
+    def DEBUG(msg):
+        if DEBUG_MODE:
+            print("DEBUG:", msg)
 
 import os
 import urllib
@@ -51,19 +60,31 @@ appname = 'Nextcloud'
 
 # determine nextcloud path, default is "~/Nextcloud"
 nextcloud_pathes = []
-try:
-    config = configparser.ConfigParser()
-    config.read(os.path.expanduser("~/.config/Nextcloud/nextcloud.cfg"))
-    for key, value in config["Accounts"].items():
-        if "localpath" in key:
-            path = os.path.expanduser(value)
-            path = os.path.realpath(path)
-            nextcloud_pathes.append(path)
-except:
-    nextcloud_pathes = ["~/Nextcloud"]
-    print("Could not read config, falling back to default path",nextcloud_pathes,"..")
 
-DEBUG("Found nextcloud folders:")
+if len(sys.argv) <= 1:
+    try:
+        config = configparser.ConfigParser()
+        config.read(os.path.expanduser("~/.config/Nextcloud/nextcloud.cfg"))
+        for key, value in config["Accounts"].items():
+            if "localpath" in key:
+                path = os.path.expanduser(value)
+                path = os.path.realpath(path)
+                nextcloud_pathes.append(path)
+    except:
+        nextcloud_pathes = ["~/Nextcloud"]
+        print("Could not read config, falling back to default path",nextcloud_pathes,"..")
+
+else:
+    requested_paths = sys.argv[1:]
+    DEBUG("Got following paths to check:")
+    DEBUG(requested_paths)
+    
+    for path in requested_paths:
+        path = os.path.expanduser(path)
+        path = os.path.realpath(path)
+        nextcloud_pathes.append(path)
+
+DEBUG("Will check on following files and folders:")
 DEBUG(nextcloud_pathes)
 
 def get_local_path(url):
@@ -229,7 +250,7 @@ def translate_command(cmd):
                'NEW+SWM'   : 'Syncing..',
                'IGNORE+SWM': 'WARNING..',
                'ERROR+SWM' : 'ERROR..',
-               'NOP'       : 'No operation (the nextcloud path could be wrong. Is '+";".join(nextcloud_pathes)+' correct?)'
+               'NOP'       : 'No operation (the nextcloud path could be wrong. Is "'+";".join(nextcloud_pathes)+'" correct?)'
                }
     return answers[cmd]
 
@@ -243,7 +264,7 @@ def handle_commands(action, args):
         print(translate_command(state))
         RECV_ANSWER = True
         
-        if len(nextcloud_pathes) == 1:      
+        if len(sys.argv) <= 1 and len(nextcloud_pathes) == 1:      
             DEBUG("Exiting on purpose.")
             exit()
 
@@ -252,7 +273,7 @@ socketConnect.addListener(handle_commands)
 
 RECV_ANSWER = False
 for nextcloud_path in nextcloud_pathes:
-    if len(nextcloud_pathes) > 1:
+    if len(sys.argv) > 1:
         print(nextcloud_path, end=": ")
 
     RECV_ANSWER = False
