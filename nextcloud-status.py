@@ -26,7 +26,7 @@ python3 = sys.version_info[0] >= 3
 
 # Print help
 if "-h" in sys.argv or "--help" in sys.argv:
-    print("USAGE:", sys.argv[0], "[-h|--help] [--debug] [files..]")
+    print("USAGE:", sys.argv[0], "[-h|--help] [--debug] [-r|-R|--recursive] [files..]")
     sys.exit()
 
 def DEBUG(msg): pass
@@ -37,6 +37,22 @@ if DEBUG_MODE:
         if DEBUG_MODE:
             print("DEBUG:", msg)
 
+RECURSIVE_MODE = False
+for option in ["-R", "-r", "--recursive"]:
+    if option in sys.argv:
+        RECURSIVE_MODE = True
+        sys.argv.remove(option)
+if RECURSIVE_MODE:
+    DEBUG("RECURSIVE_MODE enabled.")
+ 
+# Exclude files in recursive mode
+exclude_patterns = [
+    ".nextcloudsync.log",
+    ".owncloudsync.log",
+    ".sync_*.db*"
+]
+
+import fnmatch
 import os
 import urllib
 if python3:
@@ -62,6 +78,7 @@ appname = 'Nextcloud'
 nextcloud_pathes = []
 
 if len(sys.argv) <= 1:
+    DEBUG("No paths were explicitly requested. Getting main folder from config..")
     try:
         config = configparser.ConfigParser()
         config.read(os.path.expanduser("~/.config/Nextcloud/nextcloud.cfg"))
@@ -76,14 +93,17 @@ if len(sys.argv) <= 1:
 
 else:
     requested_paths = sys.argv[1:]
-    DEBUG("Got following paths to check:")
+    DEBUG("Following paths were explicitly requested:")
     DEBUG(requested_paths)
     
     for path in requested_paths:
-        path = os.path.expanduser(path)
-        path = os.path.realpath(path)
-        nextcloud_pathes.append(path)
-
+        if os.path.exists(path):
+            path = os.path.expanduser(path)
+            path = os.path.realpath(path)
+            nextcloud_pathes.append(path)
+        else:
+            print(f"ERROR: Path does not exist: {path}")
+            
 DEBUG("Will check on following files and folders:")
 DEBUG(nextcloud_pathes)
 
@@ -240,7 +260,7 @@ def translate_command(cmd):
     Translate command to human readable format.
     Aim is to be as identical as possible to the outputs from 'dropbox status'.
     """
-    answers = { 'OK'        : 'Up to date',
+    answers = {'OK'        : 'Up to date',
                'SYNC'      : 'Syncing..',
                'NEW'       : 'Syncing..',
                'IGNORE'    : 'WARNING..',
@@ -250,32 +270,43 @@ def translate_command(cmd):
                'NEW+SWM'   : 'Syncing..',
                'IGNORE+SWM': 'WARNING..',
                'ERROR+SWM' : 'ERROR..',
-               'NOP'       : 'No operation (the nextcloud path could be wrong. Is "'+";".join(nextcloud_pathes)+'" correct?)'
+               'NOP'       : 'Untracked'
                }
     return answers[cmd]
+
+CURR_PATH = None # used to print path from inside following function
+TRANSLATED_ANSWER = None
+RECV_ANSWER = False
 
 def handle_commands(action, args):
     #answer = args[0]  # For debug only
     #print("Action " + action + " -> got " + answer)  # For debug only
     global RECV_ANSWER
+    global TRANSLATED_ANSWER
+    global CURR_PATH
+    
     if action == 'STATUS':
         state = args[0]
         
-        print(translate_command(state))
         RECV_ANSWER = True
+        TRANSLATED_ANSWER = translate_command(state)
         
-        if len(sys.argv) <= 1 and len(nextcloud_pathes) == 1:      
+        if DEBUG_MODE or not RECURSIVE_MODE or TRANSLATED_ANSWER != "Up to date":
+            if RECURSIVE_MODE or len(sys.argv) > 1:
+                print(CURR_PATH, end=": ")
+            print(TRANSLATED_ANSWER)
+        
+        if len(sys.argv) <= 1 and len(nextcloud_pathes) == 1 and not RECURSIVE_MODE:      
             DEBUG("Exiting on purpose.")
             exit()
 
 socketConnect = SocketConnect()
 socketConnect.addListener(handle_commands)   
 
-RECV_ANSWER = False
+FOUND_NOT_UP_TO_DATE_FILES_IN_RECURSIVE_MODE = False
 for nextcloud_path in nextcloud_pathes:
-    if len(sys.argv) > 1:
-        print(nextcloud_path, end=": ")
-
+    CURR_PATH = nextcloud_path
+    
     RECV_ANSWER = False
 
     DEBUG("handle notify..")
@@ -284,12 +315,35 @@ for nextcloud_path in nextcloud_pathes:
     socketConnect._handle_notify(None, None)
 
     # wait 3 seconds for an answer
-    wait_count = 3
+    wait_count = 10
     while wait_count>0 and not RECV_ANSWER:
         DEBUG(".")
-        time.sleep(0.2)
+        #time.sleep(0.01)
         wait_count -= 0.2
         
     if not RECV_ANSWER:  
-        print("No answer from socket.")
-
+        print("ERROR: No answer from socket.")
+        sys.exit(1)
+        
+    if RECURSIVE_MODE and TRANSLATED_ANSWER != "Up to date":
+        FOUND_NOT_UP_TO_DATE_FILES_IN_RECURSIVE_MODE = True
+        recursive_paths = []
+        for root, dirs, files in os.walk(nextcloud_path):
+            #recursive_paths.append(root)
+            recursive_paths.extend(
+                [os.path.join(root, d) for d in dirs]
+            )
+            recursive_paths.extend(
+                [os.path.join(root, f) for f in files
+                    # exclude nextcloud log and db files:
+                    if not any(fnmatch.fnmatch(f, p) for p in exclude_patterns)]
+            )
+            break
+        nextcloud_pathes.extend(recursive_paths)
+        
+if not FOUND_NOT_UP_TO_DATE_FILES_IN_RECURSIVE_MODE:
+    # Explanation, why we need this special case (for now):
+    # In recursive mode, "Up to date" message are silenced.
+    # However, if no other messages (e.g. sync) are found,
+    # print "Up to date" at least once:
+    print(translate_command('OK'))
