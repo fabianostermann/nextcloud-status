@@ -28,9 +28,11 @@ def DEBUG(msg):
 import sys
 python3 = sys.version_info[0] >= 3
 
+import os
+
 # Print help
 if "-h" in sys.argv or "--help" in sys.argv:
-    print("USAGE:", sys.argv[0], "[-h|--help] [--debug] [-r|-R|--recursive] [files..]")
+    print("USAGE:", os.path.basename(sys.argv[0]), "[-h|--help] [--debug] [-r|-R|--recursive] [files..]")
     sys.exit()
 
 def DEBUG(msg): pass
@@ -57,7 +59,6 @@ exclude_patterns = [
 ]
 
 import fnmatch
-import os
 import urllib
 if python3:
     import urllib.parse
